@@ -127,14 +127,14 @@ image_write(image_read(noise_img), "images/taylor_swift_noisy.png")
 # Smooth the image with wFLSA --------------------------------------------------
 
 # Global attributes
-w_height <- 4 # the patch height
-w_width <- 5  # the patch width
+w_height <- 5 # the patch height
+w_width <- 4  # the patch width
 lambda1 <- 0.001
 lambda2 <- c(0.04, 0.1)
 eps <- 1e-6
 
 # Register parallel backend
-registerDoParallel(cores = parallel::detectCores() %/% 2)
+registerDoParallel(cores = as.integer(parallel::detectCores() * 0.75))
 
 # Patch-wise convolution attributes
 height <- nrow(noise_img)
@@ -216,7 +216,7 @@ library(reticulate)
 
 # Create conda environment with the required packages
 if (!("wflsa" %in% conda_list()$name)) {
-  conda_create("wflsa", packages = c("conda-forge::opencv", "matplotlib"))
+  conda_create("wflsa", packages = c("conda-forge::opencv", "conda-forge::matplotlib"))
 }
 use_condaenv("wflsa")
 

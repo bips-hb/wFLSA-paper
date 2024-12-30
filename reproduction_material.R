@@ -4,10 +4,14 @@
 #     An Alternating Direction Method of Multipliers Algorithm for the 
 #                Weighted Fused LASSO  Signal Approximator
 #
-#               SECTION 6: Heterogenous Image Smoothing
 ################################################################################
 
 # Load required libraries
+library(flsa)
+library(wflsa)
+library(dplyr)
+library(microbenchmark)
+library(progress)
 library(magick)
 library(narray)
 library(wflsa)
@@ -17,77 +21,176 @@ library(ggplot2)
 library(grid)
 library(gridExtra)
 
+# Load utility functions
+source("utils.R")
+
+################################################################################
+#                       Section ???: Runtime comparison
+################################################################################
+
+# Random binary graph ----------------------------------------------------------
 # Set seed for reproducibility
 set.seed(42)
 
+# Constants
+lambda1 <- 1
+lambda2 <- 1
+k_maxGrpNum <- 8
+n_repls <- 2
 
-# Utility functions ------------------------------------------------------------
+#' This tibble contains all the parameter settings. It includes combinations of 
+#' 'p' (size of the square weight matrix) and 'density' (density of the binary values).
+parameter_settings <- tibble(expand.grid(
+  p = c(10, 50, seq(100,1000,by=100)), 
+  density = c(.5)#seq(.1, 1, by = .1)
+))
 
-# Method for calculating the noise intensity which increases radially
-get_noise_structure <- function(height, width) {
-  # Calculate the maximal distance from the midpoint to the corners
-  max_dist <- sqrt((width / 2 - 0.5)^2 + (height / 2 - 0.5)^2)
-  
-  # Create a grid of coordinates
-  y_coords <- matrix(base::rep(1:height, each = width), ncol = width, byrow = TRUE)
-  x_coords <- matrix(base::rep(1:width, height), ncol = width, byrow = TRUE)
-  
-  # Calculate the distance from the midpoint
-  dist_from_center <- sqrt((y_coords - 0.5 - height / 2)^2 + (x_coords - 0.5 - width / 2)^2)
-  
-  # Calculate the noise intensity between 0 and 1 with a radial increase
-  noise_structure <- (dist_from_center / max_dist)^2
-  
-  noise_structure
-}
+# number of parameter settings
+n_parameter_settings <- nrow(parameter_settings)
 
-# Method for adding noise to an image
-add_noise <- function(image, factor = 0.5) {
-  height <- nrow(image)
-  width <- ncol(image)
-  
-  # Get the noise intensity
-  noise_strength <- get_noise_structure(height, width) * factor
-  
-  # Create noise (random values between -1 and 1)
-  noise <- array(runif(height * width, min = -1, max = 1), dim = c(height, width))
-  additiv_noise <- noise * noise_strength
-  dim(additiv_noise) <- c(dim(additiv_noise), 1)
-  
-  # Add noise to the image and clip the values to [0, 1]
-  res <- image + additiv_noise
-  res[res < 0] <- 0
-  res[res > 1] <- 1
-  
-  res
-}
+# Create a progress bar
+pb <- progress::progress_bar$new(total = n_parameter_settings)
 
-# This method converts the matrix with the noise intensities for each pixel 
-# into the weight matrix used for wFLSA, considering only the neighboring 
-# `num_neighbors`. Thus, for an image of size HxW, the weight matrix will have
-# the shape (H*W)x(H*W).
-generate_neighborhood_matrices <- function(weight_matrix, num_neighbors = 5) {
-  height <- nrow(weight_matrix)
-  width <- ncol(weight_matrix)
+#' Go over each of the parameter settings and check the run time
+res <- lapply(1:n_parameter_settings, function(i) {
   
-  neighbor_matrices <- array(0, dim = c(height, width, 1, height,  width, 1))
+  # Get the parameters
+  p <- as.integer(parameter_settings[i, 'p'])
+  density <- as.double(parameter_settings[i,'density'])
   
-  for (i in 1:height) {
-    for (j in 1:width) {
-      neighbors <- array(0, dim = c(height, width, 1))
-      row_idx <- max(0, i - num_neighbors):min(height, i + num_neighbors)
-      col_idx <- max(0, j - num_neighbors):min(width, j + num_neighbors)
-      weights <- weight_matrix[row_idx, col_idx]
-      dim(weights) <- c(dim(weights), 1)
-      neighbors[row_idx, col_idx, ] <- narray::rep(weights, 1, 3)
-      neighbors[i, j, 1] <- 0
-      neighbor_matrices[i, j, 1, , , ] <- neighbors
+  # Create the random binary matrix weight matrix
+  W <- random_binary_weight_matrix(p, density)
+  
+  # Create the corresponding connListObj needed by the flsa package
+  connListObj <- create_connListObj(W)
+  
+  # generate the raw data 
+  y <- rnorm(p)
+  
+  # Applies the flsa function to the data
+  FLSA <- function() {
+    # if there are no connections what so ever
+    if (connListObj$connList_is_null) {
+      # lambda2 is zero, since there is no smoothness penalty
+      c(flsa::flsa(y, lambda1 = lambda1, lambda2 = 0, thr = 1e-7))
+    } else {
+      flsa_obj <- flsa::flsa(y, lambda1 = lambda1, connListObj = connListObj$connList, 
+                             thr = 1e-7, maxGrpNum = k_maxGrpNum * length(y))
+      c(flsaGetSolution(flsa_obj, lambda1 = lambda1, lambda2 = lambda2))
     }
   }
   
-  dim(neighbor_matrices) <- c(height * width, height * width)
-  neighbor_matrices
-}
+  # Applies the wflsa package to the data
+  wFLSA <- function() {
+    wflsa::wflsa(y, W, lambda1 = lambda1, lambda2 = lambda2, eps = 1e-7)$betas[[1]]
+  }
+  
+  # Assesses the runtime 
+  time <- microbenchmark::microbenchmark(wFLSA(), 
+                                         FLSA(), times = n_repls)
+  
+  # Get the difference
+  diff <- replicate(n_repls, mean((wFLSA() - FLSA())^2))
+  pb$tick()
+  
+  return(list(time = time, difference = diff))
+})
+
+# Create plot
+p_random_graph <- create_plot(lapply(res, function(x) x$time), 
+                              parameter_settings = parameter_settings, 
+                              title = "Random Graph")
+
+p_random_graph_diff <- ggplot2::ggplot(data = data.frame(
+  p = base::rep(parameter_settings$p, each = n_repls),
+  difference = unlist(lapply(res, function(x) x$difference))
+), aes(x = p, y = difference)) + 
+  geom_point() + 
+  geom_smooth() + 
+  ylab("Mean Squared Difference") + 
+  xlab("p") + 
+  ggtitle("Mean Squared Difference between wFLSA and FLSA") + 
+  theme_minimal()
+
+# Classic 1-D FLSA -------------------------------------------------------------
+# Set seed for reproducibility
+set.seed(42)
+
+# Constants
+lambda1 <- 1
+lambda2 <- 1
+k_maxGrpNum <- 4
+n_repls <- 5
+
+#' This tibble contains all the parameter settings
+parameter_settings_1D <- tibble(expand.grid(
+  p = c(10, 50, seq(100, 1000, by = 100)) #, seq(2500, 10000, by = 2500))
+))
+
+# number of parameter settings
+n_parameter_settings <- nrow(parameter_settings_1D)
+
+# Create a progress bar
+pb <- progress::progress_bar$new(total = n_parameter_settings)
+
+#' Go over each of the parameter settings and check the run time
+res <- lapply(1:n_parameter_settings, function(i) {
+  
+  # Get the parameters
+  p <- as.integer(parameter_settings_1D[i, 'p'])
+  
+  # Create the random binary matrix weight matrix
+  W <- band_matrix(p)
+  
+  # Create the corresponding connListObj needed by the flsa package
+  connListObj <- create_connListObj(W)
+  
+  # generate the raw data 
+  y <- rnorm(p)
+  
+  # Applies the flsa function to the data
+  FLSA <- function(k = 4) {
+    c(flsa::flsa(y, lambda1 = lambda1, lambda2 = lambda2, maxGrpNum = k * length(y)))
+  }
+  
+  # Applies the wflsa package to the data
+  wFLSA <- function() {
+    wflsa::wflsa(y, W, lambda1 = lambda1, lambda2 = lambda2, offset = FALSE)$betas[[1]] # TODO: Why do we need `offest = FALSE`?
+  }
+  
+  # Assesses the runtime 
+  time <- microbenchmark::microbenchmark(wFLSA(), 
+                                         FLSA(), times = n_repls)
+  
+  # Get the difference
+  diff <- replicate(n_repls, mean((wFLSA() - FLSA())^2))
+  pb$tick()
+  
+  return(list(time = time, difference = diff))
+})
+
+# Create plot
+p_1d <- create_plot(lapply(res, function(x) x$time), 
+                    parameter_settings = parameter_settings_1D, 
+                    title = "1-D FLSA")
+
+p_1_diff <- ggplot2::ggplot(data = data.frame(
+  p = base::rep(parameter_settings_1D$p, each = n_repls),
+  difference = unlist(lapply(res, function(x) x$difference))
+), aes(x = p, y = difference)) + 
+  geom_point() + 
+  geom_smooth() + 
+  ylab("Mean Squared Difference") + 
+  xlab("p") + 
+  ggtitle("Mean Squared Difference between wFLSA and FLSA") + 
+  theme_minimal()
+
+################################################################################
+#                 SECTION 6: Heterogenous Image Smoothing
+################################################################################
+
+# Set seed for reproducibility
+set.seed(42)
 
 # Show the radial noise structure ----------------------------------------------
 noise_structure <- get_noise_structure(400, 400)
@@ -146,70 +249,85 @@ idx <- expand.grid(i = seq(1, height - w_height + 1),
                    j = seq(1, width - w_width + 1))
 idx <- lapply(seq_len(nrow(idx)), function(a) list(idx[a, 1], idx[a, 2]))
 
-# Initialize the result matrices
-res_image <- array(0, dim = dim(noise_img))
-res_freq <- array(0, dim = dim(noise_img))
-
-# Apply wFLSA to each patch
-res <- foreach(idx = idx) %dopar% {
-  # Get indices of the current patch
-  idx_h <- idx[[1]]:min(height, idx[[1]] + w_height - 1)
-  idx_w <- idx[[2]]:min(width, idx[[2]] + w_width - 1)
-
-  # Get image and weight parts of the current patch
-  sub_image <- noise_img[idx_h, idx_w, , drop = FALSE]
-  sub_weights <- weights[idx_h, idx_w]
-
-  # Apply function
-  W <- generate_neighborhood_matrices(sub_weights, max(w_width, w_height))
-  y <- c(sub_image)
-  res <- wflsa::wflsa(y, W, lambda1, lambda2, eps = eps, offset = FALSE)
-
-  list(
-    first_lambda = array(res$betas[[1]], dim = dim(sub_image)),
-    second_lambda = array(res$betas[[2]], dim = dim(sub_image))
+# Repeat for each lambda2
+results <- list()
+for (lambda in lambda2) {
+  # Start time
+  stime <- Sys.time()
+  
+  # Initialize the result matrices
+  res_image <- array(0, dim = dim(noise_img))
+  res_freq <- array(0, dim = dim(noise_img))
+  
+  # Apply wFLSA to each patch
+  res <- foreach(idx = idx) %dopar% {
+    # Get indices of the current patch
+    idx_h <- idx[[1]]:min(height, idx[[1]] + w_height - 1)
+    idx_w <- idx[[2]]:min(width, idx[[2]] + w_width - 1)
+    
+    # Get image and weight parts of the current patch
+    sub_image <- noise_img[idx_h, idx_w, , drop = FALSE]
+    sub_weights <- weights[idx_h, idx_w]
+    
+    # Apply function
+    W <- generate_neighborhood_matrices(sub_weights, max(w_width, w_height))
+    y <- c(sub_image)
+    res <- wflsa::wflsa(y, W, lambda1, lambda, eps = eps, offset = FALSE)
+    
+    array(res$betas[[1]], dim = dim(sub_image))
+  }
+  
+  # Combine the patches into the final image
+  for (i in seq_along(res)) {
+    # Get indices
+    idx_h <- idx[[i]][[1]]:min(height, idx[[i]][[1]] + w_height - 1)
+    idx_w <- idx[[i]][[2]]:min(width, idx[[i]][[2]] + w_width - 1)
+    
+    # Add image to results
+    res_image[idx_h, idx_w, ] <- res_image[idx_h, idx_w, , drop = FALSE] + res[[i]]
+    res_freq[idx_h, idx_w, ] <- res_freq[idx_h, idx_w, ] + 1
+  }
+  
+  # Normalize the result
+  res_image <- res_image / res_freq
+  res_image <- (res_image - min(res_image)) / (max(res_image) - min(res_image))
+  
+  # Measure the time
+  total_time <- Sys.time() - stime
+  
+  # Append results
+  results[[as.character(lambda)]] <- list(
+    image = res_image,
+    time = total_time
   )
 }
 
-# Combine the patches into the final image
-res_first_lambda <- array(0, dim = dim(noise_img))
-res_second_lambda <- array(0, dim = dim(noise_img))
-res_freq <- array(0, dim = dim(noise_img))
-for (i in seq_along(res)) {
-  # Get indices
-  idx_h <- idx[[i]][[1]]:min(height, idx[[i]][[1]] + w_height - 1)
-  idx_w <- idx[[i]][[2]]:min(width, idx[[i]][[2]] + w_width - 1)
-
-  # Add image to results
-  res_first_lambda[idx_h, idx_w, ] <-
-    res_first_lambda[idx_h, idx_w, , drop = FALSE] + res[[i]]$first_lambda
-  res_second_lambda[idx_h, idx_w, ] <-
-    res_second_lambda[idx_h, idx_w, , drop = FALSE] + res[[i]]$second_lambda
-  res_freq[idx_h, idx_w, ] <- res_freq[idx_h, idx_w, ] + 1
-}
-res_first_lambda <- res_first_lambda / res_freq
-res_first_lambda <- (res_first_lambda - min(res_first_lambda)) /
-  (max(res_first_lambda) - min(res_first_lambda))
-res_second_lambda <- res_second_lambda / res_freq
-res_second_lambda <- (res_second_lambda - min(res_second_lambda)) /
-  (max(res_second_lambda) - min(res_second_lambda))
 
 # Show results -----------------------------------------------------------------
 
 # Show the result for lambda2 = 0.04
-image_ggplot(image_read(res_first_lambda)) +
+img <- results[[paste0(lambda2[1])]]$image
+image_ggplot(image_read(img)) +
   theme_void() +
-  ggtitle("Wflsa (lambda2 = 0.04)") +
+  ggtitle(paste0("Wflsa (lambda2 = ", lambda2[1], ")")) +
   theme(plot.title = element_text(hjust = 0.5, size = 15, face = "bold"))
-image_write(image_read(res_first_lambda), "images/taylor_swift_wflsa_1.png")
+image_write(image_read(img), "images/taylor_swift_wflsa_1.png")
+{ 
+  cat("Runtime for lambda2 = 0.04:\n")
+  print(results[[paste0(lambda2[1])]]$time)
+}
 
 # Show the result for lambda2 = 0.1
-image_ggplot(image_read(res_second_lambda)) +
+img <- results[[paste0(lambda2[2])]]$image
+image_ggplot(image_read(img)) +
   theme_void() +
-  ggtitle("Wflsa (lambda2 = 0.1)") +
+  ggtitle(paste0("Wflsa (lambda2 = ", lambda2[2], ")")) +
   theme(plot.title = element_text(hjust = 0.5, size = 15, face = "bold"))
-image_write(image_read(res_second_lambda), "images/taylor_swift_wflsa_2.png")
-
+image_write(image_read(img), "images/taylor_swift_wflsa_2.png")
+{ 
+  cat("Runtime for lambda2 = 0.1:\n")
+  print(results[[paste0(lambda2[2])]]$time)
+}
 
 # Comparison with Median Filter and NLM ----------------------------------------
 library(reticulate)

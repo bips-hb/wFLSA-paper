@@ -110,6 +110,26 @@ random_binary_weight_matrix <- function(p, density) {
   return(W)
 }
 
+#' Generate Random Weight Matrix
+#'
+#' \code{random_weight_matrix} function creates a random weight matrix 
+#' of size \code{p} based on a gaussian distribution.
+#'
+#' @param p Size of the square weight matrix.
+#' @return A random weight matrix of size \code{p}.
+#'
+#' @examples
+#' \dontrun{
+#' # Generate a random weight matrix of size 5
+#' random_binary_weight_matrix(5, 0.3)
+#' }
+random_weight_matrix <- function(p, density) {
+  W <- matrix(rnorm(p*p, sd = 0.2), nrow = p)
+  W[upper.tri(W)] <- t(W)[upper.tri(W)]
+  diag(W) <- 0
+  return(W)
+}
+
 #' Create Plot for Runtime Assessment Results
 #'
 #' \code{create_plot} function reads in the runtime assessment results from a file, 
@@ -158,6 +178,29 @@ create_plot <- function(res,
     guides(color=guide_legend(override.aes=list(fill=NA)))
 }
 
+
+# Get results as data.frame
+get_results <- function(res, parameter_settings, var = "time", label = NULL) {
+  df <- lapply(seq_along(res), function(i) {
+    df <- as.data.frame(res[[i]][[var]])
+    
+    if (var == "time") {
+      df$expr <- as.character(df$expr)
+      df$expr <- substring(df$expr, 1, nchar(df$expr) - 2)
+      colnames(df) <- c("algorithm", "time")
+      df$time <- df$time / 1e9
+    } else if (var == "difference") {
+      colnames(df) <- c("MSE")
+    }
+    df$problem <- if (is.null(label)) NULL else gsub("^\\s+|[()]", "", label)
+    df$label <- if (is.null(label)) NULL else paste0(df$algorithm, label)
+    df$p <- as.integer(parameter_settings[i, 1])
+    
+    df
+  })
+  
+  do.call(rbind, df)
+}
 
 
 # Image Smoothing --------------------------------------------------------------

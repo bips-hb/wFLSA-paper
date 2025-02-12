@@ -11,265 +11,25 @@ library(flsa)
 library(wflsa)
 library(dplyr)
 library(microbenchmark)
-library(progress)
 library(magick)
 library(narray)
-library(wflsa)
 library(cli)
 library(foreach)
 library(parallel)
-library(pbmcapply)
 library(doParallel)
 library(ggplot2)
 library(grid)
 library(gridExtra)
+library(data.table)
+library(batchtools)
+library(geomtextpath)
+library(ggthemes)
 
 # Load utility functions
 source("utils.R")
 
 ################################################################################
-#                       Section ???: Runtime comparison
-################################################################################
-
-# Random graph -----------------------------------------------------------------
-# Note: The package flsa does not support the weighted fused lasso. Therefore,
-# we can only compare the runtime of the wflsa package.
-
-# Set seed for reproducibility
-set.seed(42)
-
-# Constants
-lambda1 <- 0.1
-lambda2 <- 0.1
-n_repls <- 2#0
-num_threads <- 1
-eps <- 1e-9
-
-#' This tibble contains all the parameter settings. It includes combinations of 
-#' 'p' (size of the square weight matrix) and 'density' (density of the binary values).
-parameter_settings <- tibble(expand.grid(
-  p = c(1000, 5000) #c(10, 50, seq(100, 1000, by = 100), 1250, 1500, 1750, 2000, 3000, 4000, 5000)
-))
-
-# number of parameter settings
-n_parameter_settings <- nrow(parameter_settings)
-
-#' Go over each of the parameter settings and check the run time
-res <- lapply(cli_progress_along(1:n_parameter_settings, "Runtime: Random Graph"), function(i) {
-  
-  # Get the parameters
-  p <- as.integer(parameter_settings[i, 'p'])
-  
-  # Create the random binary matrix weight matrix
-  W <- random_weight_matrix(p)
-  
-  # generate the raw data 
-  y <- rnorm(p)
-  
-  # Applies the wflsa package to the data
-  wFLSA <- function() {
-    wflsa::wflsa(y, W, lambda1 = lambda1, lambda2 = lambda2, eps = eps)$betas[[1]]
-  }
-  
-  # Assesses the runtime 
-  time <- microbenchmark::microbenchmark(wFLSA(), times = n_repls)
-  
-  return(list(time = time))
-}) #, mc.cores = num_threads)
-
-# Get results as data.frame
-res_random_graph <- get_results(res, parameter_settings, label = " (Random Graph)")
-
-# Save results
-if (!dir.exists("results")) dir.create("results")
-saveRDS(res_random_graph, "results/random_graph.rds")
-
-# Random binary graph ----------------------------------------------------------
-# Set seed for reproducibility
-set.seed(42)
-
-# Constants
-lambda1 <- 0.1
-lambda2 <- 0.1
-k_maxGrpNum <- 12 # Needs to be high, flsa fails to converge otherwise
-eps <- 1e-9
-n_repls <- 1#0
-num_threads <- 1
-
-#' This tibble contains all the parameter settings. It includes combinations of 
-#' 'p' (size of the square weight matrix) and 'density' (density of the binary values).
-parameter_settings <- tibble(expand.grid(
-  p = c(2500), #, c(10, 50, seq(100, 1000, by = 100), 1250, 1500, 1750, 2000, 3000, 4000, 5000), 
-  density = c(.5)
-))
-
-# number of parameter settings
-n_parameter_settings <- nrow(parameter_settings)
-
-#' Go over each of the parameter settings and check the run time
-res <- lapply(cli_progress_along(1:n_parameter_settings, "Runtime: Random Binary Graph"), function(i) {
-  
-  # Get the parameters
-  p <- as.integer(parameter_settings[i, 'p'])
-  density <- as.double(parameter_settings[i,'density'])
-  
-  # Create the random binary matrix weight matrix
-  W <- random_binary_weight_matrix(p, density)
-  
-  # Create the corresponding connListObj needed by the flsa package
-  connListObj <- create_connListObj(W)
-  
-  # generate the raw data 
-  y <- rnorm(p)
-  
-  # Applies the flsa function to the data
-  FLSA <- function() {
-    # if there are no connections what so ever
-    if (connListObj$connList_is_null) {
-      # lambda2 is zero, since there is no smoothness penalty
-      c(flsa::flsa(y, lambda1 = lambda1, lambda2 = 0, thr = eps))
-    } else {
-      flsa_obj <- flsa::flsa(y, lambda1 = lambda1, connListObj = connListObj$connList, 
-                             thr = eps, maxGrpNum = k_maxGrpNum * length(y))
-      c(flsaGetSolution(flsa_obj, lambda1 = lambda1, lambda2 = lambda2))
-    }
-  }
-  
-  # Applies the wflsa package to the data
-  wFLSA <- function() {
-    wflsa::wflsa(y, W, lambda1 = lambda1, lambda2 = lambda2, eps = eps, offset = FALSE)$betas[[1]]
-  }
-  
-  # Assesses the runtime 
-  time <- microbenchmark::microbenchmark(wFLSA(), FLSA(), times = n_repls)
-  
-  # Get the difference
-  diff <- replicate(n_repls, mean((wFLSA() - FLSA())^2))
-  
-  return(list(time = time, difference = diff))
-}) #, mc.cores = num_threads)
-
-res_random_binary_graph <- get_results(res, parameter_settings, label = " (Random Binary Graph)")
-res_random_binary_graph_mse <- get_results(res, parameter_settings, 
-                                           var = "difference", label = "Random Binary Graph")
-
-# Save results
-if (!dir.exists("results")) dir.create("results")
-saveRDS(res_random_binary_graph, "results/random_binary_graph.rds")
-saveRDS(res_random_binary_graph_mse, "results/random_binary_graph_mse.rds")
-
-# Classic 1-D FLSA -------------------------------------------------------------
-# Set seed for reproducibility
-set.seed(42)
-
-# Constants
-lambda1 <- 0.1
-lambda2 <- 0.1
-k_maxGrpNum <- 4
-eps <- 1e-9
-n_repls <- 2#0
-num_threads <- 1
-
-#' This tibble contains all the parameter settings
-parameter_settings_1D <- tibble(expand.grid(
-  p = c(1000, 5000) #c(10, 50, seq(100, 1000, by = 100), 1250, 1500, 1750, 2000, 3000, 4000, 5000)
-))
-
-# number of parameter settings
-n_parameter_settings <- nrow(parameter_settings_1D)
-
-#' Go over each of the parameter settings and check the run time
-res <- lapply(cli_progress_along(1:n_parameter_settings, "Runtime: Classic 1D"), function(i) {
-  
-  # Get the parameters
-  p <- as.integer(parameter_settings_1D[i, 'p'])
-  
-  # Create the random binary matrix weight matrix
-  W <- band_matrix(p)
-  
-  # generate the raw data 
-  y <- rnorm(p)
-  
-  # Applies the flsa function to the data
-  FLSA <- function() {
-    c(flsa::flsa(y, lambda1 = lambda1, lambda2 = lambda2, 
-                 maxGrpNum = k_maxGrpNum * length(y), thr = eps))
-  }
-  
-  # Applies the wflsa package to the data
-  wFLSA <- function() {
-    wflsa::wflsa(y, W, lambda1 = lambda1, lambda2 = lambda2, 
-                 eps = eps, offset = FALSE)$betas[[1]] # TODO: Why do we need `offest = FALSE`?
-  }
-  
-  # Assesses the runtime 
-  time <- microbenchmark::microbenchmark(wFLSA(), FLSA(), times = n_repls)
-  
-  # Get the difference
-  diff <- replicate(n_repls, mean((wFLSA() - FLSA())^2))
-  
-  return(list(time = time, difference = diff))
-}) #, mc.cores = num_threads)
-
-# Get results as data.frame
-res_1D <- get_results(res, parameter_settings_1D, label = " (classic 1D)")
-res_1D_mse <- get_results(res, parameter_settings_1D, var = "difference", label = "Classic 1D")
-
-# Save results
-if (!dir.exists("results")) dir.create("results")
-saveRDS(res_1D, "results/classic_1D.rds")
-saveRDS(res_1D_mse, "results/classic_1D_mse.rds")
-
-
-# Create plots -----------------------------------------------------------------
-
-# Load results for time comparison
-res_time <- rbind(
-  readRDS("results/random_graph.rds"),
-  readRDS("results/random_binary_graph.rds"),
-  readRDS("results/classic_1D.rds")
-)
-
-res_time <- res_time %>% 
-  group_by(algorithm, label, p, problem) %>% 
-  summarise(mean_time = mean(time)) %>%
-  mutate(label = factor(label, levels = 
-                          c("FLSA (classic 1D)", "FLSA (Random Binary Graph)", 
-                            "wFLSA (classic 1D)", "wFLSA (Random Binary Graph)", 
-                            "wFLSA (Random Graph)")))
-
-# Create plot for time comparison
-p_time <- ggplot(res_time, aes(x = p, y = mean_time, color = label)) + 
-  geom_line(linewidth = 0.25) +
-  geom_point() +
-  labs(y = "time (s)", color = "Method") + 
-  ggtitle("Runtime Comparison") + 
-  facet_grid(cols = vars(problem)) +
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_log10(expand = c(0, 0)) +
-  theme_bw() + 
-  guides(color=guide_legend(override.aes=list(fill=NA)))
-
-
-# Load results for MSE comparison
-res_mse <- rbind(
-  readRDS("results/random_binary_graph_mse.rds"),
-  readRDS("results/classic_1D_mse.rds")
-)
-
-ggplot(res_mse, aes(x = p, y = MSE, color = label)) + 
-  geom_rect(xmin = -Inf, xmax = Inf, ymin = 0, ymax = 1e-10, color = "darkgray", fill = "grey", alpha = 0.5, data = NULL) +
-  geom_point() +
-  labs(y = "MSE", color = "Problem") + 
-  ggtitle("Mean Squared Error Comparison") + 
-  scale_x_continuous(expand = c(0, 0)) +
-  scale_y_log10() +
-  ylim(0, 5e-10) +
-  theme_bw() + 
-  guides(color=guide_legend(override.aes=list(fill=NA)))
-
-################################################################################
-#                 SECTION 6: Heterogenous Image Smoothing
+#                 Figure 2: Heterogenous Image Smoothing
 ################################################################################
 
 # Set seed for reproducibility
@@ -287,12 +47,12 @@ image_ggplot(image_read(noise_structure)) +
 # Show the original image and the image with added noise -----------------------
 
 # Load image and resize
-img_orig <- image_read("images/taylor_swift_free.png")
+img_orig <- image_read("figures/taylor_swift_free.png")
 img_orig <- image_convert(image_resize(img_orig, "400x"), type = "Grayscale")
 img <- as.integer(img_orig[[1]]) / 255
 
 # Save image
-image_write(image_read(img), "images/taylor_swift_original.png")
+image_write(image_read(img), "figures/taylor_swift_original.png")
 
 # Show image
 image_ggplot(img_orig) +
@@ -308,7 +68,7 @@ image_ggplot(image_read(noise_img)) +
   theme(plot.title = element_text(hjust = 0.5, size = 15, face = "bold"))
 
 # Save image
-image_write(image_read(noise_img), "images/taylor_swift_noisy.png")
+image_write(image_read(noise_img), "figures/taylor_swift_noisy.png")
 
 # Smooth the image with wFLSA --------------------------------------------------
 
@@ -394,7 +154,7 @@ image_ggplot(image_read(img)) +
   theme_void() +
   ggtitle(paste0("Wflsa (lambda2 = ", lambda2[1], ")")) +
   theme(plot.title = element_text(hjust = 0.5, size = 15, face = "bold"))
-image_write(image_read(img), "images/taylor_swift_wflsa_1.png")
+image_write(image_read(img), "figures/taylor_swift_wflsa_1.png")
 { 
   cat("Runtime for lambda2 = 0.04:\n")
   print(results[[paste0(lambda2[1])]]$time)
@@ -406,7 +166,7 @@ image_ggplot(image_read(img)) +
   theme_void() +
   ggtitle(paste0("Wflsa (lambda2 = ", lambda2[2], ")")) +
   theme(plot.title = element_text(hjust = 0.5, size = 15, face = "bold"))
-image_write(image_read(img), "images/taylor_swift_wflsa_2.png")
+image_write(image_read(img), "figures/taylor_swift_wflsa_2.png")
 { 
   cat("Runtime for lambda2 = 0.1:\n")
   print(results[[paste0(lambda2[2])]]$time)
@@ -422,4 +182,160 @@ if (!("wflsa" %in% conda_list()$name)) {
 use_condaenv("wflsa")
 
 # Apply Median Filter and NLM
-py_run_file("cv2_denoiser.py")
+py_run_file("utils/cv2_denoiser.py")
+
+
+
+################################################################################
+#                       Figure 2: Runtime comparison
+################################################################################
+
+# Set seed
+set.seed(42)
+
+# Simulation parameters --------------------------------------------------------
+n_repls <- 50
+p <- c(10, 50, seq(100, 1000, by = 50))
+
+# Algorithm parameters ---------------------------------------------------------
+lambda1 <- c(0.1)
+lambda2 <- c(0.1) 
+eps <- 1e-10
+k_maxGrpNum <- 15
+
+
+# Registry ---------------------------------------------------------------------
+reg_name <- "runtime"
+reg_dir <- file.path("registries", reg_name)
+dir.create("registries", showWarnings = FALSE)
+unlink(reg_dir, recursive = TRUE)
+makeExperimentRegistry(file.dir = reg_dir, 
+                       packages = c("wflsa", "flsa", "microbenchmark"),
+                       source = c("utils/utils.R", "utils/limit_cpus.R"),
+                       conf.file = "utils/config.R")
+
+
+# Problems ---------------------------------------------------------------------
+problem_classic <- function(data, job, p) {
+  W <- band_matrix(p)
+  y <- rnorm(p) * p**0.75
+  
+  # Assume centered y
+  y <- y - mean(y)
+  
+  list(y = y, W = W, connListObj = NULL, calc_flsa = TRUE)
+}
+
+problem_random <- function(data, job, p) {
+  W <- random_weight_matrix(p)
+  y <- rnorm(p) * p**0.75
+  
+  # Assume centered y
+  y <- y - mean(y)
+  
+  list(y = y, W = W, connListObj = NULL, calc_flsa = FALSE)
+}
+
+problem_random_binary <- function(data, job, p) {
+  W <- random_binary_weight_matrix(p, density = 0.5)
+  connListObj <- create_connListObj(W) # needed by the flsa package
+  y <- rnorm(p) * p**0.75
+ 
+  # Assume centered y
+  y <- y - mean(y)
+  
+  list(y = y, W = W, connListObj = connListObj, calc_flsa = TRUE)
+}
+
+
+# Add problems
+addProblem(name = "random_full", fun = problem_random, seed = 1)
+addProblem(name = "random_binary", fun = problem_random_binary, seed = 111)
+addProblem(name = "classic", fun = problem_classic, seed = 1111)
+
+
+# Algorithm --------------------------------------------------------------------
+
+# Applies the wflsa package to the data
+wFLSA <- function(y, W, l1, l2,  ...) {
+  wflsa::wflsa(y, W, lambda1 = l1, lambda2 = l2, eps = 1e-10, ...)$betas[[1]]
+}
+
+algo <- function(data, job, instance, lambda1, lambda2) {
+  y <- instance$y
+  W <- instance$W
+  
+  # Calculate wFLSA
+  time_wflsa <- microbenchmark::microbenchmark({
+    res_wflsa = wFLSA(y, W, lambda1, lambda2)
+  }, times = 1)$time / 1e9
+  
+  res <- data.frame(time = time_wflsa, method = "wflsa", p = length(y),
+                    lambda1 = lambda1, lambda2 = lambda2)
+  
+  res
+}
+
+# Add algorithm
+addAlgorithm(name = "solver", fun = algo)
+
+# Experiments ------------------------------------------------------------------
+prob_design <- list(
+  random_full = expand.grid(p = p),
+  random_binary = expand.grid(p = p),
+  classic = expand.grid(p = p)
+)
+
+algo_design <- list(
+  solver = expand.grid(
+    lambda1 = lambda1, 
+    lambda2 = lambda2)
+)
+
+addExperiments(prob_design, algo_design, repls = n_repls)
+summarizeExperiments()
+testJob(1)
+
+# Submit -----------------------------------------------------------------------
+ids <- findNotSubmitted()$job.id
+submitJobs(ids = sample(ids))
+waitForJobs()
+
+# Results ----------------------------------------------------------------------
+loadRegistry(file.dir = reg_dir, conf.file = "utils/config.R")
+
+res <- flatten(reduceResultsDataTable())
+args <- getJobPars()[, c("job.id", "problem")]
+dt_time <- merge(res, args, by = "job.id")
+
+# Set levels and labels
+dt_time$problem <- factor(dt_time$problem, 
+                          levels = c("classic", "random_binary", "random_full"),
+                          labels = c("Classic Problem", "Random binary W", "Random sparse W"))
+dt_time$lambda1 <- paste0("lambda[1]==", dt_time$lambda1)
+dt_time$lambda2 <- paste0("lambda[2]==", dt_time$lambda2)
+
+# Mean time over replications
+dt_time <- dt_time[, .(time = mean(time)), by = .(p, lambda1, lambda2, problem)]
+
+# Plot results -----------------------------------------------------------------
+ggplot(dt_time, aes(x = p, y = time, color = problem)) +
+  geom_texthline(yintercept = 1, color = "gray25", linetype = "dashed", 
+                 label = "1 second threshold", hjust = 0.75) +
+  geom_point() +
+  geom_line() +
+  facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
+  scale_color_colorblind() +
+  theme_minimal() +
+  scale_y_log10() +
+  theme(legend.position = "top") +
+  labs(x = "p", y = "Time (s)", shape = "Package", color = "Problem")
+
+# Check if directory exists
+if (!dir.exists("figures")) dir.create("figures")
+
+ggsave("figures/runtime_comparison.pdf", width = 9, height = 5)
+ggsave("figures/runtime_comparison.png", width = 9, height = 5, dpi = 400)
+
+
+

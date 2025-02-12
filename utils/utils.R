@@ -123,8 +123,8 @@ random_binary_weight_matrix <- function(p, density) {
 #' # Generate a random weight matrix of size 5
 #' random_binary_weight_matrix(5, 0.3)
 #' }
-random_weight_matrix <- function(p, density) {
-  W <- matrix(rnorm(p*p, sd = 0.2), nrow = p)
+random_weight_matrix <- function(p) {
+  W <- matrix(runif(p*p) * rbinom(p*p, 1, 0.5), nrow = p)
   W[upper.tri(W)] <- t(W)[upper.tri(W)]
   diag(W) <- 0
   return(W)
@@ -195,6 +195,8 @@ get_results <- function(res, parameter_settings, var = "time", label = NULL) {
     df$problem <- if (is.null(label)) NULL else gsub("^\\s+|[()]", "", label)
     df$label <- if (is.null(label)) NULL else paste0(df$algorithm, label)
     df$p <- as.integer(parameter_settings[i, 1])
+    df$lambda1 <- as.double(parameter_settings[i, 2])
+    df$lambda2 <- as.double(parameter_settings[i, 3])
     
     df
   })

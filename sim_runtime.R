@@ -146,7 +146,7 @@ algo_design <- list(
     k_maxGrpNum = k_maxGrpNum)
 )
 
-addExperiments(prob_design, algo_design, repls = 2)
+addExperiments(prob_design, algo_design, repls = n_repls)
 summarizeExperiments()
 testJob(1)
 
@@ -191,11 +191,18 @@ dt_time$problem <- factor(dt_time$problem,
 dt_time$lambda1 <- paste0("lambda[1]==", dt_time$lambda1)
 dt_time$lambda2 <- paste0("lambda[2]==", dt_time$lambda2)
 
-# Plot results -----------------------------------------------------------------
 
-if (!file.exists("figures")) {
-  dir.create("figures")
-}
+# Save results -----------------------------------------------------------------
+if (!file.exists("results")) dir.create("results")
+saveRDS(dt_time, file = "results/runtime_comparison.rds")
+saveRDS(dt_res, file = "results/betas.rds")
+
+# To reproduce the final results:
+# dt_time <- readRDS("results/runtime_comparison.rds")
+# dt_res <- readRDS("results/betas.rds")
+
+# Plot results -----------------------------------------------------------------
+if (!file.exists("figures")) dir.create("figures")
 
 # Time Comparison
 dt_time <- dt_time[, .(time = mean(time)), 

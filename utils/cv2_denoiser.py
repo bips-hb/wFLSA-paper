@@ -6,14 +6,14 @@ import multiprocessing
 # Set number of CPUs
 cv2.setNumThreads(int(multiprocessing.cpu_count() * 0.75))
 
-img = cv2.imread('images/taylor_swift_noisy.png')
+img = cv2.imread('figures/taylor_swift_noisy.png')
 
 
 # Apply median filter
 median_filter_stime = time.time()
 img_median = cv2.medianBlur(img, 5)
 median_filter_time = time.time() - median_filter_stime
-cv2.imwrite('images/taylor_swift_median.png', img_median)
+cv2.imwrite('figures/taylor_swift_median.png', img_median)
 print('Median filter time: ', round(median_filter_time, 6), " seconds")
 
 plt.subplot(121)
@@ -25,7 +25,7 @@ plt.title('Median Filter')
 nlm_stime = time.time()
 img_nlm = cv2.fastNlMeansDenoising(img, None, 10, 21, 41)
 nlm_time = time.time() - nlm_stime
-cv2.imwrite('images/taylor_swift_nlm.png', img_nlm)
+cv2.imwrite('figures/taylor_swift_nlm.png', img_nlm)
 print('NLM time: ', round(nlm_time, 6), " seconds")
 
 plt.subplot(122)

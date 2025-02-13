@@ -26,7 +26,7 @@ library(geomtextpath)
 library(ggthemes)
 
 # Load utility functions
-source("utils.R")
+source("utils/utils.R")
 
 ################################################################################
 #                 Figure 2: Heterogenous Image Smoothing
@@ -199,9 +199,7 @@ p <- c(10, 50, seq(100, 1000, by = 50))
 
 # Algorithm parameters ---------------------------------------------------------
 lambda1 <- c(0.1)
-lambda2 <- c(0.1) 
-eps <- 1e-10
-k_maxGrpNum <- 15
+lambda2 <- c(0.1)
 
 
 # Registry ---------------------------------------------------------------------
@@ -307,6 +305,13 @@ loadRegistry(file.dir = reg_dir, conf.file = "utils/config.R")
 res <- flatten(reduceResultsDataTable())
 args <- getJobPars()[, c("job.id", "problem")]
 dt_time <- merge(res, args, by = "job.id")
+
+# Save results
+if (!dir.exists("results")) dir.create("results")
+saveRDS(dt_time, "results/results.rds")
+
+# Load the results to reproduce the figure
+#dt_time <- readRDS("results/results.rds")
 
 # Set levels and labels
 dt_time$problem <- factor(dt_time$problem, 

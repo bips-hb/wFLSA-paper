@@ -1,1 +1,1 @@
-cluster.functions = makeClusterFunctionsMulticore(ncpus = 200, fs.latency = 0)
+cluster.functions = makeClusterFunctionsMulticore(ncpus = 20, fs.latency = 0)

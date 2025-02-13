@@ -179,7 +179,7 @@ dt_res$method <- factor(dt_res$method, levels = c("wflsa", "flsa"),
                         labels = c("wFLSA (ours)", "FLSA"))
 dt_res$problem <- factor(dt_res$problem, 
                          levels = c("classic", "random_binary", "random_full"),
-                         labels = c("Classic Problem", "Random binary W", "Random sparse W"))
+                         labels = c("Classic Problem", "Random binary W", "Random W"))
 dt_res$lambda1 <- paste0("lambda[1]==", dt_res$lambda1)
 dt_res$lambda2 <- paste0("lambda[2]==", dt_res$lambda2)
 
@@ -187,7 +187,7 @@ dt_time$method <- factor(dt_time$method, levels = c("wflsa", "flsa"),
                         labels = c("wFLSA (ours)", "FLSA"))
 dt_time$problem <- factor(dt_time$problem, 
                          levels = c("classic", "random_binary", "random_full"),
-                         labels = c("Classic Problem", "Random binary W", "Random sparse W"))
+                         labels = c("Classic Problem", "Random binary W", "Random W"))
 dt_time$lambda1 <- paste0("lambda[1]==", dt_time$lambda1)
 dt_time$lambda2 <- paste0("lambda[2]==", dt_time$lambda2)
 
@@ -210,9 +210,11 @@ dt_time <- dt_time[, .(time = mean(time)),
 ggplot(dt_time, aes(x = p, y = time, color = problem, linetype = method,shape = method)) +
   geom_texthline(yintercept = 1, color = "gray25", linetype = "dashed", 
                  label = "1 second threshold", hjust = 0.75) +
+  geom_texthline(yintercept = 60, color = "gray25", linetype = "dashed", 
+                 label = "1 minute threshold", hjust = 0.6) +
   geom_point() +
   geom_line() +
-  facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
+  #facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
   scale_color_colorblind() +
   theme_minimal() +
   scale_y_log10() +
@@ -228,9 +230,11 @@ dt_time <- dt_time[method == "wFLSA (ours)", ]
 ggplot(dt_time, aes(x = p, y = time, color = problem)) +
   geom_texthline(yintercept = 1, color = "gray25", linetype = "dashed", 
                  label = "1 second threshold", hjust = 0.75) +
+  geom_texthline(yintercept = 60, color = "gray25", linetype = "dashed", 
+                 label = "1 minute threshold", hjust = 0.6) +
   geom_point() +
   geom_line() +
-  facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
+  #facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
   scale_color_colorblind() +
   theme_minimal() +
   scale_y_log10() +
@@ -247,7 +251,7 @@ ggplot(dt_norm, aes(x = p, y = norm, color = problem)) +
   geom_point() +
   geom_line() +
   scale_color_colorblind() +
-  facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
+  #facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
   theme_minimal() +
   scale_y_log10() +
   ggtitle("Eucledean Norm (normalized by p)") +
@@ -257,8 +261,8 @@ ggsave("figures/euclidean_norm.pdf", width = 9, height = 5)
 
 
 # Difference between results
-dt_diff <- dt_res[method == "wFLSA (ours)" & problem != "Random sparse W" , -"method"]
-dt_diff$beta <- dt_diff$beta - dt_res[method == "FLSA" & problem != "Random sparse W", ]$beta
+dt_diff <- dt_res[method == "wFLSA (ours)" & problem != "Random W" , -"method"]
+dt_diff$beta <- dt_diff$beta - dt_res[method == "FLSA" & problem != "Random W", ]$beta
 colnames(dt_diff)[2] <- "beta_diff"
 dt_error <-  dt_diff[, .(error = sqrt(mean(beta_diff**2))), 
                      by = .(p, lambda1, lambda2, eps, problem, job.id)]
@@ -268,7 +272,7 @@ ggplot(dt_error, aes(x = as.factor(p), y = error)) +
                  linetype = "dashed", color = "black") +
   geom_boxplot(aes(fill = problem), outlier.size = 0.4) +
   scale_fill_manual(values = c("#E69F00", "#56B4E9")) +
-  facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
+  #facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
   scale_y_log10(limits = c(-Inf, 1)) +
   theme_minimal() +
   theme(legend.position = "top") +

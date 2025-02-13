@@ -29,7 +29,7 @@ library(ggthemes)
 source("utils/utils.R")
 
 ################################################################################
-#                 Figure 2: Heterogenous Image Smoothing
+#                 Figure 1: Heterogenous Image Smoothing
 ################################################################################
 
 # Set seed for reproducibility
@@ -316,9 +316,7 @@ saveRDS(dt_time, "results/results.rds")
 # Set levels and labels
 dt_time$problem <- factor(dt_time$problem, 
                           levels = c("classic", "random_binary", "random_full"),
-                          labels = c("Classic Problem", "Random binary W", "Random sparse W"))
-dt_time$lambda1 <- paste0("lambda[1]==", dt_time$lambda1)
-dt_time$lambda2 <- paste0("lambda[2]==", dt_time$lambda2)
+                          labels = c("Classic Problem", "Random binary W", "Random W"))
 
 # Mean time over replications
 dt_time <- dt_time[, .(time = mean(time)), by = .(p, lambda1, lambda2, problem)]
@@ -327,9 +325,10 @@ dt_time <- dt_time[, .(time = mean(time)), by = .(p, lambda1, lambda2, problem)]
 ggplot(dt_time, aes(x = p, y = time, color = problem)) +
   geom_texthline(yintercept = 1, color = "gray25", linetype = "dashed", 
                  label = "1 second threshold", hjust = 0.75) +
+  geom_texthline(yintercept = 60, color = "gray25", linetype = "dashed", 
+                 label = "1 minute threshold", hjust = 0.75) +
   geom_point() +
   geom_line() +
-  facet_grid(lambda1 ~ lambda2, labeller = label_parsed) +
   scale_color_colorblind() +
   theme_minimal() +
   scale_y_log10() +
